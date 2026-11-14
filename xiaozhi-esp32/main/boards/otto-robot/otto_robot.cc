@@ -18,11 +18,16 @@
 #include "lamp_controller.h"
 #include "led/single_led.h"
 #include "mcp_server.h"
-#include "otto_emoji_display.h"
+#include "otto_emoji_display.h" // 保留动态表情
 #include "power_manager.h"
 #include "system_reset.h"
 #include "websocket_control_server.h"
 #include "wifi_board.h"
+
+// 【引入】PCA9685 适配层
+extern "C" {
+#include "otto_pca_adapter.h"
+}
 
 #define TAG "OttoRobot"
 
@@ -81,6 +86,7 @@ private:
     }
 
     bool DetectCamera() {
+        // ... 保持原版代码不变 ...
         ledc_timer_config_t ledc_timer = {
             .speed_mode = LEDC_LOW_SPEED_MODE,
             .duty_resolution = LEDC_TIMER_2_BIT,
@@ -185,7 +191,6 @@ private:
             ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, 0);
             camera_type_ = OTTO_CAMERA_NONE;
         } else {
-            // 根据 PID 判断摄像头类型
             if (detected_pid == OTTO_OV2640_PID_1 || detected_pid == OTTO_OV2640_PID_2) {
                 camera_type_ = OTTO_CAMERA_OV2640;
                 ESP_LOGI(TAG, "摄像头类型: OV2640 (PID=0x%04X)", detected_pid);
@@ -237,12 +242,12 @@ private:
         ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(panel_io, &panel_config, &panel));
 
         esp_lcd_panel_reset(panel);
-
         esp_lcd_panel_init(panel);
         esp_lcd_panel_invert_color(panel, DISPLAY_INVERT_COLOR);
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
 
+        // 【完全保留原版动态表情】
         display_ = new OttoEmojiDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
                                         DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
                                         DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
@@ -259,11 +264,30 @@ private:
         });
     }
 
-    void InitializeOttoController() { ::InitializeOttoController(hw_config_); }
+    // 【修改点】原版这里直接调用 InitializeOttoController()
+    // 我们将其改为后台任务延时初始化，防止 I2C 通信卡死主程序导致屏幕白屏或看门狗重启
+    static void OttoInitTask(void* arg) {
+        OttoRobot* self = static_cast<OttoRobot*>(arg);
+        vTaskDelay(pdMS_TO_TICKS(3000)); // 让系统先启动，连上网络
+        
+        // 1. 初始化 PCA9685
+        otto_pca_init(); 
+        
+        // 2. 让舵机逐个归位到 90 度
+        ESP_LOGI(TAG, ">>> 舵机后台初始化，恢复至 90 度 <<<");
+        for (int i = 0; i < 6; i++) {
+            otto_pca_set_servo_angle(i, 90);
+            vTaskDelay(pdMS_TO_TICKS(50)); 
+        }
+        
+        // 3. 启动原生动作控制器
+        ::InitializeOttoController(self->hw_config_); 
+        
+        vTaskDelete(NULL);
+    }
 
 public:
     const HardwareConfig& GetHardwareConfig() const { return hw_config_; }
-
     OttoCameraType GetCameraType() const { return camera_type_; }
 
 private:
@@ -279,19 +303,17 @@ private:
     void StartNetwork() override {
         WifiBoard::StartNetwork();
         vTaskDelay(pdMS_TO_TICKS(1000));
-
         InitializeWebSocketControlServer();
     }
 
     bool InitializeCamera() {
+        // ... 保持原版代码不变 ...
         if (!has_camera_ || i2c_bus_ == nullptr) {
             return false;
         }
 
-        // 释放检测阶段占用的 I2C 资源，避免与 esp_camera 初始化冲突。
         i2c_del_master_bus(i2c_bus_);
         i2c_bus_ = nullptr;
-        // 停止检测阶段输出的 XCLK，交由 esp_camera 自行接管。
         ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, 0);
 
         camera_config_t config = {};
@@ -351,7 +373,6 @@ public:
           has_camera_(false),
           camera_type_(OTTO_CAMERA_NONE) {
 #if OTTO_HARDWARE_VERSION == OTTO_VERSION_AUTO
-        // GPIO15/GPIO16 在摄像头版上有外部上拉；无摄像头版由内部弱下拉保持为低。
         is_camera_board_ = DetectHardwareVersion();
         ESP_LOGI(TAG, "自动检测硬件版本: %s", is_camera_board_ ? "摄像头版" : "无摄像头版");
 #elif OTTO_HARDWARE_VERSION == OTTO_VERSION_CAMERA
@@ -389,13 +410,15 @@ public:
             }
         }
 
-        InitializeOttoController();
+        // 【修改点】不再同步阻塞调用，改为创建后台独立任务
+        // InitializeOttoController();
+        xTaskCreate(OttoInitTask, "otto_init", 4096, this, 3, NULL);
+
         ws_control_server_ = nullptr;
         GetBacklight()->RestoreBrightness();
     }
 
     virtual AudioCodec* GetAudioCodec() override { return audio_codec_; }
-
     virtual Display* GetDisplay() override { return display_; }
 
     virtual Backlight* GetBacklight() override {
