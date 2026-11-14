@@ -82,7 +82,7 @@ private:
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
 
-        // 保持动态表情
+        // 恢复动态表情
         display_ = new OttoEmojiDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
                                         DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
                                         DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
@@ -99,15 +99,19 @@ private:
         });
     }
 
-    // 完全恢复原版的同步初始化
-    void InitializeOttoController() { 
+    // 【核心防崩】延时独立任务，I2C 卡死也绝不拖累主程序启动
+    static void OttoInitTask(void* arg) {
+        OttoRobot* self = static_cast<OttoRobot*>(arg);
+        vTaskDelay(pdMS_TO_TICKS(3000)); // 等主系统连上网络
+        
         otto_pca_init(); 
         ESP_LOGI(TAG, ">>> 舵机恢复至 90 度 <<<");
         for (int i = 0; i < 6; i++) {
             otto_pca_set_servo_angle(i, 90);
             vTaskDelay(pdMS_TO_TICKS(50)); 
         }
-        ::InitializeOttoController(hw_config_); 
+        ::InitializeOttoController(self->hw_config_); 
+        vTaskDelete(NULL);
     }
 
 public:
@@ -132,8 +136,8 @@ public:
                 hw_config_.audio_i2s_gpio_dout, hw_config_.audio_i2s_gpio_din);
         }
 
-        // 原版同步调用
-        InitializeOttoController();
+        xTaskCreate(OttoInitTask, "otto_init", 4096, this, 3, NULL);
+
         ws_control_server_ = nullptr;
         GetBacklight()->RestoreBrightness();
     }
@@ -155,12 +159,17 @@ public:
 
     virtual Camera* GetCamera() override { return nullptr; }
 
+    // 【核心防崩】强行干掉云端下发的表情集合，绝不白屏
     virtual std::string GetDeviceStatusJson() override {
         std::string baseJson = WifiBoard::GetDeviceStatusJson();
         cJSON* root = cJSON_Parse(baseJson.c_str());
         if (root != nullptr) {
             cJSON_DeleteItemFromObject(root, "chip_name");
             cJSON_AddStringToObject(root, "chip_name", "ESP32-S3-N16R8");
+            cJSON_DeleteItemFromObject(root, "screen_type");
+            cJSON_AddStringToObject(root, "screen_type", "ST7789");
+            cJSON_DeleteItemFromObject(root, "emoji_collection"); // 关键绝杀！屏蔽云端错误表情
+            
             char* newJson = cJSON_PrintUnformatted(root);
             std::string result(newJson);
             cJSON_free(newJson);
