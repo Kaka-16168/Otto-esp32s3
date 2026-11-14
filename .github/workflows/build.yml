@@ -1,0 +1,42 @@
+name: Build Official Otto Firmware
+
+on:
+  workflow_dispatch: 
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  build_otto:
+    name: Build otto-robot
+    runs-on: ubuntu-latest
+    container:
+      # 使用官方推荐的 ESP-IDF 环境
+      image: espressif/idf:release-v6.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 0
+
+      - name: Build original otto-robot variant
+        shell: bash
+        run: |
+          source "$IDF_PATH/export.sh"
+          
+          # 进入你的源码目录（根据你之前的截图，你的源码在 xiaozhi-esp32 文件夹下）
+          cd xiaozhi-esp32
+          
+          # 直接运行官方自带的 build.py 脚本，目标板卡指定为 otto-robot
+          python scripts/build.py otto-robot --name otto-robot
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-otto-firmware
+          # 官方脚本运行成功后，通常会将合并好的固件放在 build 目录下
+          path: xiaozhi-esp32/build/merged-binary.bin
+          if-no-files-found: error
