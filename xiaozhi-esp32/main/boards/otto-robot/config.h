@@ -8,8 +8,9 @@
 #define OTTO_VERSION_CAMERA 1
 #define OTTO_VERSION_NO_CAMERA 2
 
+// 【修改点 1】强制锁定为无摄像头版本，防止自动检测误判
 #ifndef OTTO_HARDWARE_VERSION
-#define OTTO_HARDWARE_VERSION OTTO_VERSION_AUTO
+#define OTTO_HARDWARE_VERSION OTTO_VERSION_NO_CAMERA
 #endif
 
 enum OttoCameraType {
@@ -63,6 +64,7 @@ struct HardwareConfig {
 };
 
 constexpr HardwareConfig CAMERA_VERSION_CONFIG = {
+    // ... (保持原样，不用修改) ...
     .power_charge_detect_pin = GPIO_NUM_NC,
     .power_adc_unit = ADC_UNIT_1,
     .power_adc_channel = ADC_CHANNEL_1,
@@ -101,43 +103,49 @@ constexpr HardwareConfig CAMERA_VERSION_CONFIG = {
     .i2c_scl_pin = GPIO_NUM_16,
 };
 
+// 【修改点 2】核心修改：适配你的硬件接线
 constexpr HardwareConfig NON_CAMERA_VERSION_CONFIG = {
-    .power_charge_detect_pin = GPIO_NUM_21,
+    .power_charge_detect_pin = GPIO_NUM_NC, // 原21与背光冲突，设为NC
     .power_adc_unit = ADC_UNIT_2,
     .power_adc_channel = ADC_CHANNEL_3,
 
-    .right_leg_pin = GPIO_NUM_39,
-    .right_foot_pin = GPIO_NUM_38,
-    .left_leg_pin = GPIO_NUM_17,
-    .left_foot_pin = GPIO_NUM_18,
-    .left_hand_pin = GPIO_NUM_8,
-    .right_hand_pin = GPIO_NUM_12,
+    // 【原生舵机引脚废弃】由于改用 PCA9685，赋予虚拟值骗过底层控制器
+    .right_leg_pin = GPIO_NUM_1,
+    .right_foot_pin = GPIO_NUM_2,
+    .left_leg_pin = GPIO_NUM_3,
+    .left_foot_pin = GPIO_NUM_4,
+    .left_hand_pin = GPIO_NUM_5,
+    .right_hand_pin = GPIO_NUM_6,
 
     .audio_input_sample_rate = 16000,
     .audio_output_sample_rate = 24000,
-    .audio_use_simplex = true,
+    .audio_use_simplex = true, // 独立引脚必须开启单工
 
     .audio_i2s_gpio_ws = GPIO_NUM_NC,
     .audio_i2s_gpio_bclk = GPIO_NUM_NC,
     .audio_i2s_gpio_din = GPIO_NUM_NC,
     .audio_i2s_gpio_dout = GPIO_NUM_NC,
 
+    // I2S 麦克风 (ICS43434)
     .audio_i2s_mic_gpio_ws = GPIO_NUM_4,
     .audio_i2s_mic_gpio_sck = GPIO_NUM_5,
     .audio_i2s_mic_gpio_din = GPIO_NUM_6,
+    // I2S 功放 (MAX98357)
     .audio_i2s_spk_gpio_dout = GPIO_NUM_7,
     .audio_i2s_spk_gpio_bclk = GPIO_NUM_15,
     .audio_i2s_spk_gpio_lrck = GPIO_NUM_16,
 
-    .display_backlight_pin = GPIO_NUM_3,
-    .display_mosi_pin = GPIO_NUM_10,
-    .display_clk_pin = GPIO_NUM_9,
-    .display_dc_pin = GPIO_NUM_46,
-    .display_rst_pin = GPIO_NUM_11,
-    .display_cs_pin = GPIO_NUM_12,
+    // ST7789 SPI 屏幕
+    .display_backlight_pin = GPIO_NUM_21,
+    .display_mosi_pin = GPIO_NUM_11,
+    .display_clk_pin = GPIO_NUM_12,
+    .display_dc_pin = GPIO_NUM_13,
+    .display_rst_pin = GPIO_NUM_10,
+    .display_cs_pin = GPIO_NUM_14,
 
-    .i2c_sda_pin = GPIO_NUM_NC,
-    .i2c_scl_pin = GPIO_NUM_NC,
+    // I2C 引脚 (PCA9685 使用)
+    .i2c_sda_pin = GPIO_NUM_8,
+    .i2c_scl_pin = GPIO_NUM_9,
 };
 
 #define CAMERA_XCLK (GPIO_NUM_3)
