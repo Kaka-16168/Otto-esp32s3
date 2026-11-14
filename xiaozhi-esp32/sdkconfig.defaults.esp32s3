@@ -1,25 +1,20 @@
-# ==========================================
-# 基础系统与 Flash 配置
-# ==========================================
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_BOARD_TYPE_OTTO_ROBOT=y
 CONFIG_HTTPD_WS_SUPPORT=y
 
-# 你指定的 QIO 模式与 240MHz 主频
-CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
-CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
-CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
-
-# 16MB Flash 与自定义分区表
+# Flash 与分区
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions/v2/16m.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions/v2/16m.csv"
 
-# ==========================================
-# PSRAM 与内存分配 (N16R8 极限优化)
-# ==========================================
+# Flash 模式与主频（使用你指定的 QIO 和 240MHz）
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# PSRAM 与内存分配
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
@@ -28,10 +23,7 @@ CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=102400
 CONFIG_SPIRAM_MEMTEST=n
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
-# ==========================================
-# WiFi 与 LWIP 缓冲区 (修复冲突)
-# ==========================================
-# 注意：你给的 STATIC=3, BA_WIN=3 太小了，容易断网。这里设为 8，兼顾稳定与内存
+# WiFi 缓冲区（你给的 3/6 太小，这里调为 8/16 保稳定）
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
 CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
 CONFIG_ESP_WIFI_RX_BA_WIN=8
@@ -39,33 +31,21 @@ CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=16
 CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 
-# 缓存配置
-CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
-CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
-CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=1536
-
-# ==========================================
-# 摄像头配置
-# ==========================================
+# 摄像头
 CONFIG_CAMERA_PSRAM_DMA=n
 CONFIG_CAMERA_DMA_BUFFER_SIZE_MAX=16384
 
-# ==========================================
-# LVGL 图形库配置 (使用 PSRAM 大池)
-# ==========================================
-CONFIG_LV_USE_SNAPSHOT=y
-# 【关键修复】既然有 8MB PSRAM，就让 LVGL 使用系统 malloc（走 PSRAM），避免挤占内部 RAM
+# LVGL 内存（必须统一为 CUSTOM，并且走 PSRAM）
+# 【核心修复】你原配置同时开了 BUILTIN 和 CUSTOM，必须只留一个
 CONFIG_LV_USE_CLIB_MALLOC=y
 # CONFIG_LV_USE_BUILTIN_MALLOC is not set
+CONFIG_LV_MEM_CUSTOM=y
+CONFIG_LV_MEM_CUSTOM_INCLUDE="stdlib.h"
 
-# ==========================================
-# 【唤醒词与资源】强制锁定官方唤醒（解决你一直报错的根源）
-# ==========================================
+# 【核心修复】强制关闭所有冲突唤醒词，使用官方原生"你好小智"
 CONFIG_FLASH_DEFAULT_ASSETS=y
 CONFIG_USE_DEFAULT_ASSETS=y
 CONFIG_LANGUAGE_ZH_CN=y
-
-# 强制启用官方原生 "你好小智" 唤醒词，绝不要碰自定义唤醒词，那是报错根源！
 CONFIG_USE_AFE_WAKE_WORD=y
 CONFIG_USE_WAKENET=y
 CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=y
