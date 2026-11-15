@@ -25,7 +25,9 @@ jobs:
           cd xiaozhi-esp32
           rm -f sdkconfig sdkconfig.old
           rm -rf build
-          python scripts/build.py otto-robot --name otto-robot
+          
+          # 核心修改：传递语言和唤醒词参数
+          python scripts/build.py otto-robot --name otto-robot --language zh-CN --wake-word "ka ka"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
