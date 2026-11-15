@@ -12,8 +12,8 @@ jobs:
   build_otto:
     name: Build otto-robot
     runs-on: ubuntu-latest
-    container:
-      image: espressif/idf:release-v6.1
+    # 移除了 container 声明，避免与 steps 中的 Action 产生冲突
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,13 +34,11 @@ if os.path.exists(file_path):
     
     for build in config.get('builds', []):
         if build.get('name') == 'otto-robot':
-            # 剔除原本冲突的唤醒词和语言配置
             new_sdkconfig = []
             for item in build.get('sdkconfig_append', []):
                 if 'WAKE_WORD' not in item and 'LANGUAGE' not in item and 'WN9' not in item:
                     new_sdkconfig.append(item)
             
-            # 追加我们想要的中文+卡卡配置
             new_sdkconfig.append('CONFIG_LANGUAGE_ZH_CN=y')
             new_sdkconfig.append('CONFIG_USE_ESP_WAKE_WORD=n')
             new_sdkconfig.append('CONFIG_USE_AFE_WAKE_WORD=n')
@@ -59,16 +57,16 @@ else:
 
       - name: Build otto-robot variant (with custom wake word "ka ka")
         shell: bash
+        # 在编译步骤中，通过 Docker 运行 ESP-IDF 环境
         run: |
-          source "$IDF_PATH/export.sh"
-          cd xiaozhi-esp32
-          
-          # 清理旧的构建配置和产物
-          rm -f sdkconfig sdkconfig.old
-          rm -rf build
-          
-          # 执行构建
-          python scripts/build.py otto-robot --name otto-robot
+          docker run --rm \
+            -v ${{ github.workspace }}/xiaozhi-esp32:/project \
+            -w /project \
+            espressif/idf:release-v6.1 \
+            bash -c "source /opt/esp/idf/export.sh && \
+                     rm -f sdkconfig sdkconfig.old && \
+                     rm -rf build && \
+                     python scripts/build.py otto-robot --name otto-robot"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
