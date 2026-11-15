@@ -23,46 +23,38 @@ jobs:
         run: |
           cd xiaozhi-esp32
           
-          # 生成一个临时 python 脚本来修改 json
-          cat << 'PYTHON_EOF' > patch_config.py
-import json
-import os
-
+          echo "开始修改 config.json..."
+          
+          # 使用 Python 单行执行模式，避免多行字符串引发的 YAML 缩进错误
+          python3 -c "
+import json, os
 file_path = 'main/boards/otto-robot/config.json'
 if os.path.exists(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
-    
     for build in config.get('builds', []):
         if build.get('name') == 'otto-robot':
-            new_sdkconfig = []
-            # 过滤掉原有的英文和唤醒词配置
+            new_cfg = []
             for item in build.get('sdkconfig_append', []):
                 if 'WAKE_WORD' not in item and 'LANGUAGE' not in item and 'WN9' not in item:
-                    new_sdkconfig.append(item)
-            
-            # 写入卡卡配置
-            new_sdkconfig.append('CONFIG_LANGUAGE_ZH_CN=y')
-            new_sdkconfig.append('CONFIG_USE_ESP_WAKE_WORD=n')
-            new_sdkconfig.append('CONFIG_USE_AFE_WAKE_WORD=n')
-            new_sdkconfig.append('CONFIG_USE_CUSTOM_WAKE_WORD=y')
-            new_sdkconfig.append('CONFIG_CUSTOM_WAKE_WORD="ka ka"')
-            new_sdkconfig.append('CONFIG_CUSTOM_WAKE_WORD_DISPLAY="卡卡"')
-            
-            build['sdkconfig_append'] = new_sdkconfig
-    
+                    new_cfg.append(item)
+            new_cfg.extend([
+                'CONFIG_LANGUAGE_ZH_CN=y',
+                'CONFIG_USE_ESP_WAKE_WORD=n',
+                'CONFIG_USE_AFE_WAKE_WORD=n',
+                'CONFIG_USE_CUSTOM_WAKE_WORD=y',
+                'CONFIG_CUSTOM_WAKE_WORD=\"ka ka\"',
+                'CONFIG_CUSTOM_WAKE_WORD_DISPLAY=\"卡卡\"'
+            ])
+            build['sdkconfig_append'] = new_cfg
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
-    print('config.json patched successfully!')
+    print('Patch 成功!')
 else:
-    print('config.json not found!')
-PYTHON_EOF
+    print('找不到 config.json!')
+"
 
-          # 执行脚本并清理
-          python3 patch_config.py
-          rm patch_config.py
-
-      - name: Build otto-robot variant
+      - name: Build otto-robot
         shell: bash
         run: |
           source "$IDF_PATH/export.sh"
