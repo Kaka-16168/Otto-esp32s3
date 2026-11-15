@@ -1,4 +1,5 @@
 name: Build Boards
+
 on:
   workflow_dispatch: 
   push:
@@ -17,37 +18,54 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build and Merge Full Firmware
+      - name: Patch config.json
+        shell: bash
+        run: |
+          cd xiaozhi-esp32
+          
+          echo "开始修改 config.json..."
+          
+          # 使用 Python 单行执行模式，避免多行字符串引发的 YAML 缩进错误
+          python3 -c "
+import json, os
+file_path = 'main/boards/otto-robot/config.json'
+if os.path.exists(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    for build in config.get('builds', []):
+        if build.get('name') == 'otto-robot':
+            new_cfg = []
+            for item in build.get('sdkconfig_append', []):
+                if 'WAKE_WORD' not in item and 'LANGUAGE' not in item and 'WN9' not in item:
+                    new_cfg.append(item)
+            new_cfg.extend([
+                'CONFIG_LANGUAGE_ZH_CN=y',
+                'CONFIG_USE_ESP_WAKE_WORD=n',
+                'CONFIG_USE_AFE_WAKE_WORD=n',
+                'CONFIG_USE_CUSTOM_WAKE_WORD=y',
+                'CONFIG_CUSTOM_WAKE_WORD=\"ka ka\"',
+                'CONFIG_CUSTOM_WAKE_WORD_DISPLAY=\"卡卡\"'
+            ])
+            build['sdkconfig_append'] = new_cfg
+    with open(file_path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    print('Patch 成功!')
+else:
+    print('找不到 config.json!')
+"
+
+      - name: Build otto-robot
         shell: bash
         run: |
           source "$IDF_PATH/export.sh"
           cd xiaozhi-esp32
-          
-          # 彻底清理
           rm -f sdkconfig sdkconfig.old
           rm -rf build
-          
-          # 生成语言包
-          python scripts/gen_lang.py --language zh-CN --output main/assets/lang_config.h
-          
-          # 直接使用 idf.py 编译
-          idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esp32s3" build
-          
-          # 进入 build 目录合并
-          cd build
-          
-          # 【核心修复】严格按照官方 flash_args 的地址进行合并！
-          esptool.py --chip esp32s3 merge_bin -o otto-firmware-full.bin \
-            --flash_mode dio --flash_freq 40m --flash_size 16MB \
-            0x0 bootloader/bootloader.bin \
-            0x8000 partition_table/partition-table.bin \
-            0xd000 ota_data_initial.bin \
-            0x10000 xiaozhi.bin \
-            0x810000 generated_assets.bin
+          python scripts/build.py otto-robot --name otto-robot
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: xiaozhi_otto-robot_full
-          path: xiaozhi-esp32/build/otto-firmware-full.bin
+          path: xiaozhi-esp32/build/merged-binary.bin
           if-no-files-found: error
