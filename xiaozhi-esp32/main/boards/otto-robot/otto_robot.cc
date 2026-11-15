@@ -227,7 +227,8 @@ public:
                 hw_config_.audio_i2s_gpio_dout, hw_config_.audio_i2s_gpio_din);
         }
 
-        xTaskCreate(OttoInitTask, "otto_init", 4096, this, 3, NULL);
+        // 在 OttoInitTask 创建处，修改为：
+        xTaskCreatePinnedToCore(OttoInitTask, "otto_init", 4096, this, 6, NULL, 0);
         InitializeMcpTools();
 
         ws_control_server_ = nullptr;
