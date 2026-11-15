@@ -12,18 +12,22 @@ jobs:
   build_otto:
     name: Build otto-robot
     runs-on: ubuntu-latest
-    # 移除了 container 声明，避免与 steps 中的 Action 产生冲突
-
+    container:
+      image: espressif/idf:release-v6.1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Patch config.json for custom wake word
+      - name: Build otto-robot variant
         shell: bash
         run: |
+          source "$IDF_PATH/export.sh"
+          
+          # 如果你的代码在 xiaozhi-esp32 目录下，保留这行；如果本身就是根目录，请删掉这行
           cd xiaozhi-esp32
-          # 使用 Python 脚本动态修改 otto-robot 的配置文件
-          python -c "
+          
+          echo "正在使用 Python 脚本修改 config.json..."
+          python3 - << 'EOF'
 import json
 import os
 
@@ -35,16 +39,18 @@ if os.path.exists(file_path):
     for build in config.get('builds', []):
         if build.get('name') == 'otto-robot':
             new_sdkconfig = []
+            # 剔除原本冲突的英文和 Hi ESP 配置
             for item in build.get('sdkconfig_append', []):
                 if 'WAKE_WORD' not in item and 'LANGUAGE' not in item and 'WN9' not in item:
                     new_sdkconfig.append(item)
             
+            # 追加中文和卡卡配置
             new_sdkconfig.append('CONFIG_LANGUAGE_ZH_CN=y')
             new_sdkconfig.append('CONFIG_USE_ESP_WAKE_WORD=n')
             new_sdkconfig.append('CONFIG_USE_AFE_WAKE_WORD=n')
             new_sdkconfig.append('CONFIG_USE_CUSTOM_WAKE_WORD=y')
-            new_sdkconfig.append('CONFIG_CUSTOM_WAKE_WORD=\"ka ka\"')
-            new_sdkconfig.append('CONFIG_CUSTOM_WAKE_WORD_DISPLAY=\"卡卡\"')
+            new_sdkconfig.append('CONFIG_CUSTOM_WAKE_WORD="ka ka"')
+            new_sdkconfig.append('CONFIG_CUSTOM_WAKE_WORD_DISPLAY="卡卡"')
             
             build['sdkconfig_append'] = new_sdkconfig
     
@@ -53,20 +59,13 @@ if os.path.exists(file_path):
     print('config.json patched successfully!')
 else:
     print('config.json not found!')
-"
+EOF
 
-      - name: Build otto-robot variant (with custom wake word "ka ka")
-        shell: bash
-        # 在编译步骤中，通过 Docker 运行 ESP-IDF 环境
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}/xiaozhi-esp32:/project \
-            -w /project \
-            espressif/idf:release-v6.1 \
-            bash -c "source /opt/esp/idf/export.sh && \
-                     rm -f sdkconfig sdkconfig.old && \
-                     rm -rf build && \
-                     python scripts/build.py otto-robot --name otto-robot"
+          echo "正在清理环境并开始编译..."
+          rm -f sdkconfig sdkconfig.old
+          rm -rf build
+          
+          python scripts/build.py otto-robot --name otto-robot
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
