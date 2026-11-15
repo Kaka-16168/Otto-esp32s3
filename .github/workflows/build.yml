@@ -18,53 +18,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build otto-robot variant
+      - name: Patch config.json
+        shell: bash
+        run: |
+          cd xiaozhi-esp32
+          # 使用 jq 工具修改 json，清理旧配置并写入卡卡
+          jq '(.builds[] | select(.name=="otto-robot").sdkconfig_append) |= map(select((contains("WAKE_WORD") or contains("LANGUAGE") or contains("WN9")) | not)) + ["CONFIG_LANGUAGE_ZH_CN=y", "CONFIG_USE_ESP_WAKE_WORD=n", "CONFIG_USE_AFE_WAKE_WORD=n", "CONFIG_USE_CUSTOM_WAKE_WORD=y", "CONFIG_CUSTOM_WAKE_WORD=\"ka ka\"", "CONFIG_CUSTOM_WAKE_WORD_DISPLAY=\"卡卡\""]' main/boards/otto-robot/config.json > config_tmp.json
+          mv config_tmp.json main/boards/otto-robot/config.json
+          echo "Patch 成功，当前配置："
+          grep -A 10 "otto-robot" main/boards/otto-robot/config.json
+
+      - name: Build
         shell: bash
         run: |
           source "$IDF_PATH/export.sh"
-          
-          # 如果你的代码在 xiaozhi-esp32 目录下，保留这行；如果本身就是根目录，请删掉这行
           cd xiaozhi-esp32
-          
-          echo "正在使用 Python 脚本修改 config.json..."
-          python3 - << 'EOF'
-import json
-import os
-
-file_path = 'main/boards/otto-robot/config.json'
-if os.path.exists(file_path):
-    with open(file_path, 'r', encoding='utf-8') as f:
-        config = json.load(f)
-    
-    for build in config.get('builds', []):
-        if build.get('name') == 'otto-robot':
-            new_sdkconfig = []
-            # 剔除原本冲突的英文和 Hi ESP 配置
-            for item in build.get('sdkconfig_append', []):
-                if 'WAKE_WORD' not in item and 'LANGUAGE' not in item and 'WN9' not in item:
-                    new_sdkconfig.append(item)
-            
-            # 追加中文和卡卡配置
-            new_sdkconfig.append('CONFIG_LANGUAGE_ZH_CN=y')
-            new_sdkconfig.append('CONFIG_USE_ESP_WAKE_WORD=n')
-            new_sdkconfig.append('CONFIG_USE_AFE_WAKE_WORD=n')
-            new_sdkconfig.append('CONFIG_USE_CUSTOM_WAKE_WORD=y')
-            new_sdkconfig.append('CONFIG_CUSTOM_WAKE_WORD="ka ka"')
-            new_sdkconfig.append('CONFIG_CUSTOM_WAKE_WORD_DISPLAY="卡卡"')
-            
-            build['sdkconfig_append'] = new_sdkconfig
-    
-    with open(file_path, 'w', encoding='utf-8') as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
-    print('config.json patched successfully!')
-else:
-    print('config.json not found!')
-EOF
-
-          echo "正在清理环境并开始编译..."
           rm -f sdkconfig sdkconfig.old
           rm -rf build
-          
           python scripts/build.py otto-robot --name otto-robot
 
       - name: Upload artifacts
