@@ -23,18 +23,25 @@ jobs:
           source "$IDF_PATH/export.sh"
           cd xiaozhi-esp32
           
+          # 彻底清理
           rm -f sdkconfig sdkconfig.old
           rm -rf build
           
+          # 生成语言包
           python scripts/gen_lang.py --language zh-CN --output main/assets/lang_config.h
           
+          # 直接使用 idf.py 编译
           idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esp32s3" build
           
+          # 进入 build 目录合并
           cd build
+          
+          # 【核心修复】严格按照官方 flash_args 的地址进行合并！
           esptool.py --chip esp32s3 merge_bin -o otto-firmware-full.bin \
             --flash_mode dio --flash_freq 40m --flash_size 16MB \
             0x0 bootloader/bootloader.bin \
             0x8000 partition_table/partition-table.bin \
+            0xd000 ota_data_initial.bin \
             0x10000 xiaozhi.bin \
             0x810000 generated_assets.bin
 
