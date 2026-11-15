@@ -5,9 +5,16 @@
   "builds": [
     {
       "name": "otto-robot",
-      "sdkconfig_append": [
-        "CONFIG_BOARD_TYPE_OTTO_ROBOT=y"
-      ]
+             "sdkconfig_append": [
+          "CONFIG_BOARD_TYPE_OTTO_ROBOT=y",
+          "CONFIG_LANGUAGE_ZH_CN=y",
+          "CONFIG_WAKE_WORD_DISABLED=n",
+          "CONFIG_USE_ESP_WAKE_WORD=n",
+          "CONFIG_USE_AFE_WAKE_WORD=n",
+          "CONFIG_USE_CUSTOM_WAKE_WORD=y",
+          "CONFIG_CUSTOM_WAKE_WORD=\"ka ka\"",
+          "CONFIG_CUSTOM_WAKE_WORD_DISPLAY=\"卡卡\""
+        ]
     }
   ]
 }
