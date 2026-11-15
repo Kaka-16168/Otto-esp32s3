@@ -18,12 +18,46 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Patch config.json
+      - name: Patch config.json (Remove old wake word)
         shell: bash
         run: |
           cd xiaozhi-esp32
-          echo "开始修改 config.json..."
-          python3 -c "import json; f=open('main/boards/otto-robot/config.json','r',encoding='utf-8'); d=json.load(f); f.close(); [b.update({'sdkconfig_append':[i for i in b.get('sdkconfig_append',[]) if 'WAKE_WORD' not in i and 'LANGUAGE' not in i and 'WN9' not in i] + ['CONFIG_LANGUAGE_ZH_CN=y', 'CONFIG_USE_ESP_WAKE_WORD=n', 'CONFIG_USE_AFE_WAKE_WORD=n', 'CONFIG_USE_CUSTOM_WAKE_WORD=y', 'CONFIG_CUSTOM_WAKE_WORD=\"ka ka\"', 'CONFIG_CUSTOM_WAKE_WORD_DISPLAY=\"卡卡\"']}) for b in d.get('builds',[]) if b.get('name')=='otto-robot']; f=open('main/boards/otto-robot/config.json','w',encoding='utf-8'); json.dump(d,f,indent=2,ensure_ascii=False); f.close(); print('Patch 成功！')"
+          echo "正在生成清理脚本..."
+          cat << 'PYTHON_EOF' > patch_config.py
+import json
+
+file_path = 'main/boards/otto-robot/config.json'
+with open(file_path, 'r', encoding='utf-8') as f:
+    config = json.load(f)
+
+for build in config.get('builds', []):
+    if build.get('name') == 'otto-robot':
+        # 核心逻辑：剔除所有包含 WAKE_WORD、LANGUAGE、WN9 的配置项
+        new_cfg = []
+        for item in build.get('sdkconfig_append', []):
+            if 'WAKE_WORD' not in item and 'LANGUAGE' not in item and 'WN9' not in item:
+                new_cfg.append(item)
+        
+        # 追加新的“卡卡”和中文配置
+        new_cfg.extend([
+            'CONFIG_LANGUAGE_ZH_CN=y',
+            'CONFIG_USE_ESP_WAKE_WORD=n',
+            'CONFIG_USE_AFE_WAKE_WORD=n',
+            'CONFIG_USE_CUSTOM_WAKE_WORD=y',
+            'CONFIG_CUSTOM_WAKE_WORD="ka ka"',
+            'CONFIG_CUSTOM_WAKE_WORD_DISPLAY="卡卡"'
+        ])
+        build['sdkconfig_append'] = new_cfg
+
+with open(file_path, 'w', encoding='utf-8') as f:
+    json.dump(config, f, indent=2, ensure_ascii=False)
+
+print("--- 修改后的配置 ---")
+print(json.dumps(config['builds'][0]['sdkconfig_append'], indent=2))
+PYTHON_EOF
+          
+          python3 patch_config.py
+          rm patch_config.py
 
       - name: Build otto-robot
         shell: bash
