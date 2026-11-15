@@ -18,6 +18,45 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Patch config.json for custom wake word
+        shell: bash
+        run: |
+          cd xiaozhi-esp32
+          # 使用 Python 脚本动态修改 otto-robot 的配置文件
+          python -c "
+import json
+import os
+
+file_path = 'main/boards/otto-robot/config.json'
+if os.path.exists(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    
+    for build in config.get('builds', []):
+        if build.get('name') == 'otto-robot':
+            # 剔除原本冲突的唤醒词和语言配置
+            new_sdkconfig = []
+            for item in build.get('sdkconfig_append', []):
+                if 'WAKE_WORD' not in item and 'LANGUAGE' not in item and 'WN9' not in item:
+                    new_sdkconfig.append(item)
+            
+            # 追加我们想要的中文+卡卡配置
+            new_sdkconfig.append('CONFIG_LANGUAGE_ZH_CN=y')
+            new_sdkconfig.append('CONFIG_USE_ESP_WAKE_WORD=n')
+            new_sdkconfig.append('CONFIG_USE_AFE_WAKE_WORD=n')
+            new_sdkconfig.append('CONFIG_USE_CUSTOM_WAKE_WORD=y')
+            new_sdkconfig.append('CONFIG_CUSTOM_WAKE_WORD=\"ka ka\"')
+            new_sdkconfig.append('CONFIG_CUSTOM_WAKE_WORD_DISPLAY=\"卡卡\"')
+            
+            build['sdkconfig_append'] = new_sdkconfig
+    
+    with open(file_path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    print('config.json patched successfully!')
+else:
+    print('config.json not found!')
+"
+
       - name: Build otto-robot variant (with custom wake word "ka ka")
         shell: bash
         run: |
@@ -27,14 +66,6 @@ jobs:
           # 清理旧的构建配置和产物
           rm -f sdkconfig sdkconfig.old
           rm -rf build
-          
-          # 将自定义唤醒词配置写入 sdkconfig.defaults
-          # build.py 会读取此文件并合并配置
-          cat >> sdkconfig.defaults << 'EOF'
-          CONFIG_USE_CUSTOM_WAKE_WORD=y
-          CONFIG_CUSTOM_WAKE_WORD="ka ka"
-          CONFIG_CUSTOM_WAKE_WORD_DISPLAY="卡卡"
-          EOF
           
           # 执行构建
           python scripts/build.py otto-robot --name otto-robot
