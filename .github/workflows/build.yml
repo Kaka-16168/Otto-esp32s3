@@ -18,12 +18,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Patch config.json
-        shell: bash
-        run: |
-          cd xiaozhi-esp32
-          python3 -c 'import json; p="main/boards/otto-robot/config.json"; d=json.load(open(p, encoding="utf-8")); b=[x for x in d["builds"] if x["name"]=="otto-robot"][0]; b["sdkconfig_append"] = [x for x in b["sdkconfig_append"] if not any(y in x for y in ["WAKE_WORD", "LANGUAGE", "WN9"])] + ["CONFIG_LANGUAGE_ZH_CN=y", "CONFIG_USE_ESP_WAKE_WORD=n", "CONFIG_USE_AFE_WAKE_WORD=n", "CONFIG_USE_CUSTOM_WAKE_WORD=y", "CONFIG_CUSTOM_WAKE_WORD=\"ka ka\"", "CONFIG_CUSTOM_WAKE_WORD_DISPLAY=\"卡卡\""]; json.dump(d, open(p, "w", encoding="utf-8"), indent=2, ensure_ascii=False); print("Patch success!")'
-
       - name: Build otto-robot
         shell: bash
         run: |
