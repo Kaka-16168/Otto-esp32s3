@@ -1,4 +1,5 @@
 name: Build Boards
+
 on:
   workflow_dispatch: 
   push:
@@ -17,15 +18,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build otto-robot variant
+      - name: Build otto-robot variant (with custom wake word "ka ka")
         shell: bash
         run: |
           source "$IDF_PATH/export.sh"
           cd xiaozhi-esp32
           
+          # 清理旧的构建配置和产物
           rm -f sdkconfig sdkconfig.old
           rm -rf build
           
+          # 将自定义唤醒词配置写入 sdkconfig.defaults
+          # build.py 会读取此文件并合并配置
+          cat >> sdkconfig.defaults << 'EOF'
+          CONFIG_USE_CUSTOM_WAKE_WORD=y
+          CONFIG_CUSTOM_WAKE_WORD="ka ka"
+          CONFIG_CUSTOM_WAKE_WORD_DISPLAY="卡卡"
+          EOF
+          
+          # 执行构建
           python scripts/build.py otto-robot --name otto-robot
 
       - name: Upload artifacts
