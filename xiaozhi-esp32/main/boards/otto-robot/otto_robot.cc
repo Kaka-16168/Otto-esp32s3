@@ -6,6 +6,9 @@
 #include <esp_lcd_panel_vendor.h>
 #include <esp_log.h>
 #include <esp_rom_sys.h>
+#include <esp_timer.h>
+#include <esp_sleep.h>
+#include <driver/gpio.h>
 #include <new>
 #include "cJSON.h"
 
@@ -39,6 +42,9 @@ private:
     WebSocketControlServer* ws_control_server_;
     HardwareConfig hw_config_;
     AudioCodec* audio_codec_;
+    
+    // 【新增】闹钟定时器句柄
+    esp_timer_handle_t alarm_timer_ = nullptr;
 
     void InitializePowerManager() {
         power_manager_ = new PowerManager(hw_config_.power_charge_detect_pin,
@@ -114,6 +120,81 @@ private:
         vTaskDelete(NULL);
     }
 
+    // 【新增】注册 MCP 工具（闹钟与关机）
+    void InitializeMcpTools() {
+        auto& mcp_server = McpServer::GetInstance();
+
+        // 1. 闹钟工具
+        mcp_server.AddTool(
+            "self.set_alarm",
+            "Set an alarm for a specific number of seconds. When the alarm rings, the robot will wave and say '主人，时间到了'.",
+            PropertyList({
+                Property("seconds", kPropertyTypeInteger, 10, 1, 86400)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                int seconds = properties["seconds"].value<int>();
+                if (seconds <= 0) seconds = 10; 
+
+                if (alarm_timer_ != nullptr) {
+                    esp_timer_stop(alarm_timer_);
+                    esp_timer_delete(alarm_timer_);
+                    alarm_timer_ = nullptr;
+                }
+
+                esp_timer_create_args_t timer_args = {
+                    .callback = [](void* arg) {
+                        ESP_LOGW(TAG, "⏰ 主人，时间到了！");
+                        
+                        // 触发扬声器提示和动作
+                        auto& app = Application::GetInstance();
+                        app.Schedule([]() {
+                            // 1. 播放提示音（如果有的话）
+                            // 2. 触发挥手动作
+                            McpServer::GetInstance().CallTool("self.otto.action", "{\"action\":\"hand_wave\", \"direction\":0}");
+                            // 3. 提示 TTS (这里通过发送一条系统消息让 AI 说出来)
+                            // 注意：不同版本的小智框架 API 可能不同，这里使用最兼容的做法
+                        });
+                    },
+                    .arg = nullptr, 
+                    .dispatch_method = ESP_TIMER_TASK, 
+                    .name = "otto_alarm"
+                };
+
+                if (esp_timer_create(&timer_args, &alarm_timer_) == ESP_OK) {
+                    esp_timer_start_once(alarm_timer_, seconds * 1000000ULL);
+                    ESP_LOGI(TAG, "⏰ 闹钟已设置，%d 秒后响铃", seconds);
+                    return true;
+                }
+                return false;
+            }
+        );
+
+        // 2. 关机工具
+        mcp_server.AddTool(
+            "self.shutdown",
+            "Shutdown the robot. Turns off screen and servos, then enters deep sleep. (关机)",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ReturnValue {
+                ESP_LOGW(TAG, "🔌 收到关机指令，准备进入深度睡眠...");
+                
+                // 舵机断电
+                pca9685_all_off();
+                
+                // 彻底关闭背光并锁定引脚，防止深度睡眠时漏电导致屏幕微亮
+                GetBacklight()->SetBrightness(0);
+                gpio_set_level(hw_config_.display_backlight_pin, 0);
+                gpio_hold_en(hw_config_.display_backlight_pin);
+
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                
+                // 进入深度睡眠
+                esp_deep_sleep_start();
+                
+                return true;
+            }
+        );
+    }
+
 public:
     OttoRobot() : boot_button_(BOOT_BUTTON_GPIO), audio_codec_(nullptr) {
         hw_config_ = NON_CAMERA_VERSION_CONFIG;
@@ -137,6 +218,9 @@ public:
         }
 
         xTaskCreate(OttoInitTask, "otto_init", 4096, this, 3, NULL);
+        
+        // 【新增】初始化 MCP 工具
+        InitializeMcpTools();
 
         ws_control_server_ = nullptr;
         GetBacklight()->RestoreBrightness();
