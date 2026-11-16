@@ -59,12 +59,12 @@ constexpr HardwareConfig NON_CAMERA_VERSION_CONFIG = {
     .power_adc_channel = ADC_CHANNEL_3,
 
     // 原生舵机引脚置为 NC，防止底层抢占。
-    .right_leg_pin = GPIO_NUM_39,
-    .right_foot_pin = GPIO_NUM_40,
-    .left_leg_pin = GPIO_NUM_41,
-    .left_foot_pin = GPIO_NUM_42,
-    .left_hand_pin = GPIO_NUM_45,
-    .right_hand_pin = GPIO_NUM_48,
+    .right_leg_pin = GPIO_NUM_1,
+    .right_foot_pin = GPIO_NUM_2,
+    .left_leg_pin = GPIO_NUM_3,
+    .left_foot_pin = GPIO_NUM_17,
+    .left_hand_pin = GPIO_NUM_18,
+    .right_hand_pin = GPIO_NUM_38,
 
     .audio_input_sample_rate = 16000,
     .audio_output_sample_rate = 24000,
