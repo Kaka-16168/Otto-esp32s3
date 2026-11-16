@@ -6,6 +6,8 @@
 #include <esp_lcd_panel_vendor.h>
 #include <esp_log.h>
 #include <esp_rom_sys.h>
+#include <esp_timer.h>
+#include <esp_sleep.h>
 #include <new>
 #include "cJSON.h"
 
@@ -18,7 +20,7 @@
 #include "lamp_controller.h"
 #include "led/single_led.h"
 #include "mcp_server.h"
-#include "otto_emoji_display.h" 
+#include "otto_emoji_display.h" // 【恢复】动态表情
 #include "power_manager.h"
 #include "system_reset.h"
 #include "websocket_control_server.h"
@@ -31,6 +33,8 @@ extern "C" {
 #define TAG "OttoRobot"
 extern void InitializeOttoController(const HardwareConfig& hw_config);
 
+using McpReturnType = ReturnValue;
+
 class OttoRobot : public WifiBoard {
 private:
     LcdDisplay* display_;
@@ -39,6 +43,7 @@ private:
     WebSocketControlServer* ws_control_server_;
     HardwareConfig hw_config_;
     AudioCodec* audio_codec_;
+    esp_timer_handle_t alarm_timer_ = nullptr;
 
     void InitializePowerManager() {
         power_manager_ = new PowerManager(hw_config_.power_charge_detect_pin,
@@ -63,10 +68,7 @@ private:
         io_config.cs_gpio_num = hw_config_.display_cs_pin;
         io_config.dc_gpio_num = hw_config_.display_dc_pin;
         io_config.spi_mode = DISPLAY_SPI_MODE;
-        
-        // 采用 20MHz 保证稳定性，防止花屏
-        io_config.pclk_hz = 10 * 1000 * 1000; 
-        
+        io_config.pclk_hz = 20 * 1000 * 1000; // 降频到 20M，彻底防花屏
         io_config.trans_queue_depth = 10;
         io_config.lcd_cmd_bits = 8;
         io_config.lcd_param_bits = 8;
@@ -85,10 +87,10 @@ private:
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
 
-        // 使用最稳的屏幕类
-        display_ = new SpiLcdDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
-                                     DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
-                                     DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+        // 【恢复】使用动态表情
+        display_ = new OttoEmojiDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
+                                        DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
+                                        DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
     }
 
     void InitializeButtons() {
@@ -102,10 +104,52 @@ private:
         });
     }
 
-    // 【防死机】将耗时的舵机通信放到后台，绝不卡死音频主任务
+    // 【恢复】闹钟和关机 MCP 工具
+    void InitializeMcpTools() {
+        auto& mcp_server = McpServer::GetInstance();
+
+        mcp_server.AddTool(
+            "self.set_alarm",
+            "Set an alarm for a specific number of seconds.",
+            PropertyList({{"seconds", kPropertyTypeInteger, 1, 86400}}),
+            [this](const PropertyList& properties) -> McpReturnType {
+                int seconds = properties["seconds"].value<int>();
+                if (seconds <= 0) seconds = 10; 
+                if (alarm_timer_ != nullptr) {
+                    esp_timer_stop(alarm_timer_);
+                    esp_timer_delete(alarm_timer_);
+                    alarm_timer_ = nullptr;
+                }
+                esp_timer_create_args_t timer_args = {
+                    .callback = [](void* arg) { ESP_LOGW(TAG, "⏰ 主人，时间到了！"); },
+                    .arg = nullptr, .dispatch_method = ESP_TIMER_TASK, .name = "otto_alarm"
+                };
+                if (esp_timer_create(&timer_args, &alarm_timer_) == ESP_OK) {
+                    esp_timer_start_once(alarm_timer_, seconds * 1000000ULL);
+                    return true;
+                }
+                return false;
+            }
+        );
+
+        mcp_server.AddTool(
+            "self.shutdown",
+            "Shutdown the robot. Turns off screen and servos, then enters deep sleep.",
+            PropertyList(),
+            [this](const PropertyList& properties) -> McpReturnType {
+                pca9685_all_off();
+                GetBacklight()->SetBrightness(0);
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                esp_deep_sleep_start();
+                return true;
+            }
+        );
+    }
+
+    // 【保留】后台舵机任务防卡死
     static void OttoInitTask(void* arg) {
         OttoRobot* self = static_cast<OttoRobot*>(arg);
-        vTaskDelay(pdMS_TO_TICKS(3000)); // 等待系统启动完毕
+        vTaskDelay(pdMS_TO_TICKS(3000)); // 等主系统稳定
         
         otto_pca_init(); 
         ESP_LOGI(TAG, ">>> 舵机后台初始化完成，恢复至 90 度 <<<");
@@ -121,7 +165,7 @@ public:
     OttoRobot() : boot_button_(BOOT_BUTTON_GPIO), audio_codec_(nullptr) {
         hw_config_ = NON_CAMERA_VERSION_CONFIG;
         
-        // 1. 优先初始化音频（保证喇叭有声音）
+        // 优先初始化音频
         if (hw_config_.audio_use_simplex) {
             audio_codec_ = new NoAudioCodecSimplex(
                 hw_config_.audio_input_sample_rate, hw_config_.audio_output_sample_rate,
@@ -135,14 +179,16 @@ public:
                 hw_config_.audio_i2s_gpio_dout, hw_config_.audio_i2s_gpio_din);
         }
 
-        // 2. 初始化屏幕与外设
         InitializeSpi();
         InitializeLcdDisplay();
         InitializeButtons();
         InitializePowerManager();
         
-        // 3. 启动舵机后台任务
+        // 启动后台舵机任务
         xTaskCreate(OttoInitTask, "otto_init", 4096, this, 3, NULL);
+
+        // 注册闹钟和关机工具
+        InitializeMcpTools();
 
         ws_control_server_ = nullptr;
         GetBacklight()->RestoreBrightness();
@@ -165,7 +211,7 @@ public:
 
     virtual Camera* GetCamera() override { return nullptr; }
 
-    // 彻底屏蔽云端表情下发，防止错误
+    // 【核心防崩】强行斩断云端下发的错误表情
     virtual std::string GetDeviceStatusJson() override {
         std::string baseJson = WifiBoard::GetDeviceStatusJson();
         cJSON* root = cJSON_Parse(baseJson.c_str());
@@ -174,6 +220,8 @@ public:
             cJSON_AddStringToObject(root, "chip_name", "ESP32-S3-N16R8");
             cJSON_DeleteItemFromObject(root, "screen_type");
             cJSON_AddStringToObject(root, "screen_type", "ST7789");
+            
+            // 关键：告诉云端我没有动态表情库，不要发 robot_2 过来
             cJSON_DeleteItemFromObject(root, "emoji_collection"); 
             
             char* newJson = cJSON_PrintUnformatted(root);
