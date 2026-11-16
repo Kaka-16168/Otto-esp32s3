@@ -53,7 +53,16 @@ void Otto::Init(int left_leg, int right_leg, int left_foot, int right_foot, int 
     is_otto_resting_ = false;
 }
 
-void Otto::AttachServos() {}
+void Otto::AttachServos() {
+    // 【核心修复】必须初始化底层数学库的当前角度为 90 度！
+    // 否则走路和振荡算法会基于 0 度进行计算，导致数据溢出或卡死。
+    for (int i = 0; i < SERVO_COUNT; i++) {
+        if (servo_pins_[i] != -1) {
+            servo_[i].SetPosition(90); // 告诉数学振荡器，我当前在 90 度
+            pca9685_set_angle(i, 90);  // 实际给 PCA9685 发送 90 度指令
+        }
+    }
+}
 
 void Otto::DetachServos() {
     pca9685_all_off();
@@ -225,7 +234,7 @@ void Otto::Home(bool hands_down) {
 bool Otto::GetRestState() { return is_otto_resting_; }
 void Otto::SetRestState(bool state) { is_otto_resting_ = state; }
 
-// =================== 动作库 (恢复原版合理振幅) ===================
+// =================== 动作库 ===================
 
 void Otto::Jump(float steps, int period) {
     int up[SERVO_COUNT] = {90, 90, 150, 30, HAND_HOME_POSITION, 180 - HAND_HOME_POSITION};
@@ -235,7 +244,6 @@ void Otto::Jump(float steps, int period) {
 }
 
 void Otto::Walk(float steps, int period, int dir, int amount) {
-    // 【修复】恢复合理的振幅 30，之前太小导致看起来没动
     int A[SERVO_COUNT] = {30, 30, 30, 30, 0, 0};
     int O[SERVO_COUNT] = {0, 0, 5, -5, HAND_HOME_POSITION - 90, HAND_HOME_POSITION};
     double phase_diff[SERVO_COUNT] = {0, 0, DEG2RAD(dir * -90), DEG2RAD(dir * -90), 0, 0};
