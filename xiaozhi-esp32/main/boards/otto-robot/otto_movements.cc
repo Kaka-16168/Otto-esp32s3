@@ -9,6 +9,7 @@ extern "C" {
 }
 
 static const char* TAG = "OttoMovements";
+(void)TAG;
 #define HAND_HOME_POSITION 45
 
 namespace {
