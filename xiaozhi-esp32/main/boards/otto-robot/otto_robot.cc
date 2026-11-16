@@ -64,8 +64,8 @@ private:
         io_config.dc_gpio_num = hw_config_.display_dc_pin;
         io_config.spi_mode = DISPLAY_SPI_MODE;
         
-        // 【核心修复 1】降低 SPI 频率，解决花屏/白屏问题
-        io_config.pclk_hz = 20 * 1000 * 1000; // 从 40MHz 降到 20MHz
+        // 采用 20MHz 保证稳定性，防止花屏
+        io_config.pclk_hz = 10 * 1000 * 1000; 
         
         io_config.trans_queue_depth = 10;
         io_config.lcd_cmd_bits = 8;
@@ -85,9 +85,10 @@ private:
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
 
-        display_ = new OttoEmojiDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
-                                        DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
-                                        DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+        // 使用最稳的屏幕类
+        display_ = new SpiLcdDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
+                                     DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
+                                     DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
     }
 
     void InitializeButtons() {
@@ -101,9 +102,10 @@ private:
         });
     }
 
+    // 【防死机】将耗时的舵机通信放到后台，绝不卡死音频主任务
     static void OttoInitTask(void* arg) {
         OttoRobot* self = static_cast<OttoRobot*>(arg);
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        vTaskDelay(pdMS_TO_TICKS(3000)); // 等待系统启动完毕
         
         otto_pca_init(); 
         ESP_LOGI(TAG, ">>> 舵机后台初始化完成，恢复至 90 度 <<<");
@@ -119,11 +121,7 @@ public:
     OttoRobot() : boot_button_(BOOT_BUTTON_GPIO), audio_codec_(nullptr) {
         hw_config_ = NON_CAMERA_VERSION_CONFIG;
         
-        InitializeSpi();
-        InitializeLcdDisplay();
-        InitializeButtons();
-        InitializePowerManager();
-        
+        // 1. 优先初始化音频（保证喇叭有声音）
         if (hw_config_.audio_use_simplex) {
             audio_codec_ = new NoAudioCodecSimplex(
                 hw_config_.audio_input_sample_rate, hw_config_.audio_output_sample_rate,
@@ -137,6 +135,13 @@ public:
                 hw_config_.audio_i2s_gpio_dout, hw_config_.audio_i2s_gpio_din);
         }
 
+        // 2. 初始化屏幕与外设
+        InitializeSpi();
+        InitializeLcdDisplay();
+        InitializeButtons();
+        InitializePowerManager();
+        
+        // 3. 启动舵机后台任务
         xTaskCreate(OttoInitTask, "otto_init", 4096, this, 3, NULL);
 
         ws_control_server_ = nullptr;
@@ -160,7 +165,7 @@ public:
 
     virtual Camera* GetCamera() override { return nullptr; }
 
-    // 【核心修复 2】强行斩断云端表情，绝不让白屏发生
+    // 彻底屏蔽云端表情下发，防止错误
     virtual std::string GetDeviceStatusJson() override {
         std::string baseJson = WifiBoard::GetDeviceStatusJson();
         cJSON* root = cJSON_Parse(baseJson.c_str());
@@ -169,7 +174,7 @@ public:
             cJSON_AddStringToObject(root, "chip_name", "ESP32-S3-N16R8");
             cJSON_DeleteItemFromObject(root, "screen_type");
             cJSON_AddStringToObject(root, "screen_type", "ST7789");
-            cJSON_DeleteItemFromObject(root, "emoji_collection"); // 拒绝下发错误表情
+            cJSON_DeleteItemFromObject(root, "emoji_collection"); 
             
             char* newJson = cJSON_PrintUnformatted(root);
             std::string result(newJson);
