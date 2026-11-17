@@ -8,8 +8,6 @@ extern "C" {
 #include "otto_pca_adapter.h"
 }
 
-static const char* TAG = "OttoMovements";
-(void)TAG;
 #define HAND_HOME_POSITION 45
 
 namespace {
@@ -25,7 +23,7 @@ Otto::~Otto() { DetachServos(); }
 unsigned long IRAM_ATTR millis() { return (unsigned long)(esp_timer_get_time() / 1000ULL); }
 
 void Otto::Init(int left_leg, int right_leg, int left_foot, int right_foot, int left_hand, int right_hand) {
-    // 【核心修复 1】强制通道映射到 0-5，不管外部传什么
+    // 【强制映射 0-5】
     servo_pins_[LEFT_LEG] = 0; servo_pins_[RIGHT_LEG] = 1;
     servo_pins_[LEFT_FOOT] = 2; servo_pins_[RIGHT_FOOT] = 3;
     servo_pins_[LEFT_HAND] = 4; servo_pins_[RIGHT_HAND] = 5;
@@ -36,7 +34,7 @@ void Otto::Init(int left_leg, int right_leg, int left_foot, int right_foot, int 
 }
 
 void Otto::AttachServos() {
-    // 【核心修复 2】初始化数学振荡器的起始位置为 90 度，解决走路不动问题
+    // 【核心修复】初始化底层虚拟舵机的位置为 90 度，解决走路不动问题
     for (int i = 0; i < SERVO_COUNT; i++) {
         if (servo_pins_[i] != -1) {
             servo_[i].SetPosition(90); 
@@ -142,7 +140,7 @@ void Otto::Home(bool hands_down) {
 bool Otto::GetRestState() { return is_otto_resting_; }
 void Otto::SetRestState(bool state) { is_otto_resting_ = state; }
 
-// =================== 【恢复官方原版所有动作振幅】 ===================
+// =================== 官方原版动作库 ===================
 void Otto::Jump(float steps, int period) {
     int up[SERVO_COUNT] = {90, 90, 150, 30, HAND_HOME_POSITION, 180 - HAND_HOME_POSITION};
     MoveServos(period, up);
