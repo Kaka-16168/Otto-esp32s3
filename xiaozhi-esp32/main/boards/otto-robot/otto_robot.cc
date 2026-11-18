@@ -1,7 +1,7 @@
 #include <driver/i2c_master.h>
 #include <driver/ledc.h>
 #include <driver/spi_common.h>
-#include <driver/gpio.h> // 【新增】用于锁定背光引脚
+#include <driver/gpio.h> // 用于锁定背光引脚
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
@@ -132,12 +132,12 @@ private:
                 esp_timer_create_args_t timer_args = {
                     .callback = [](void* arg) {
                         ESP_LOGW(TAG, "⏰ 主人，时间到了！");
-                        // 在独立任务中触发系统音效（如果有的话），或者弹窗
-                        auto& app = Application::GetInstance();
-                        app.Schedule([]() {
-                            // 借用系统提示音，或者在这里调用 TTS
-                            app.PlaySound(Lang::Sounds::OGG_POPUP); 
-                        });
+                        // 用舵机抖动来代替音效，彻底避免缺少头文件报错
+                        for (int i = 0; i < 6; i++) otto_pca_set_servo_angle(i, 120);
+                        vTaskDelay(pdMS_TO_TICKS(300));
+                        for (int i = 0; i < 6; i++) otto_pca_set_servo_angle(i, 60);
+                        vTaskDelay(pdMS_TO_TICKS(300));
+                        for (int i = 0; i < 6; i++) otto_pca_set_servo_angle(i, 90);
                     },
                     .arg = nullptr, 
                     .dispatch_method = ESP_TIMER_TASK, 
@@ -163,7 +163,7 @@ private:
                 
                 GetBacklight()->SetBrightness(0); // 2. 背光关到 0
                 
-                // 【核心修复】3. 强制锁定背光引脚为低电平，防止深度睡眠漏电导致屏幕微亮
+                // 3. 强制锁定背光引脚为低电平，防止深度睡眠漏电导致屏幕微亮
                 gpio_set_level(hw_config_.display_backlight_pin, 0);
                 gpio_hold_en(hw_config_.display_backlight_pin); 
 
@@ -214,7 +214,6 @@ public:
         
         xTaskCreate(OttoInitTask, "otto_init", 4096, this, 3, NULL);
         
-        // 【调用】初始化 MCP 工具
         InitializeMcpTools();
 
         ws_control_server_ = nullptr;
