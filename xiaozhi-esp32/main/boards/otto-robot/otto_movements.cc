@@ -23,7 +23,7 @@ Otto::~Otto() { DetachServos(); }
 unsigned long IRAM_ATTR millis() { return (unsigned long)(esp_timer_get_time() / 1000ULL); }
 
 void Otto::Init(int left_leg, int right_leg, int left_foot, int right_foot, int left_hand, int right_hand) {
-    // 【强制映射 0-5】
+    // 强制通道映射
     servo_pins_[LEFT_LEG] = 0; servo_pins_[RIGHT_LEG] = 1;
     servo_pins_[LEFT_FOOT] = 2; servo_pins_[RIGHT_FOOT] = 3;
     servo_pins_[LEFT_HAND] = 4; servo_pins_[RIGHT_HAND] = 5;
@@ -34,7 +34,7 @@ void Otto::Init(int left_leg, int right_leg, int left_foot, int right_foot, int 
 }
 
 void Otto::AttachServos() {
-    // 【核心修复】初始化底层虚拟舵机的位置为 90 度，解决走路不动问题
+    // 【核心修复】赋予数学振荡器真实的初始位置（90度），否则算出来的全是负数导致卡死
     for (int i = 0; i < SERVO_COUNT; i++) {
         if (servo_pins_[i] != -1) {
             servo_[i].SetPosition(90); 
@@ -95,11 +95,16 @@ void Otto::OscillateServos(int amplitude[SERVO_COUNT], int offset[SERVO_COUNT], 
         }
     }
     double ref = millis(); double end_time = period * cycle + ref;
+    
+    // 【核心修复】每次循环延时 10ms，防止 I2C 拥堵
     while (millis() < end_time) {
         for (int i = 0; i < SERVO_COUNT; i++) {
-            if (servo_pins_[i] != -1) { servo_[i].Refresh(); pca9685_set_angle(i, servo_[i].GetPosition()); }
+            if (servo_pins_[i] != -1) { 
+                servo_[i].Refresh(); 
+                pca9685_set_angle(i, servo_[i].GetPosition()); 
+            }
         }
-        vTaskDelay(5);
+        vTaskDelay(pdMS_TO_TICKS(10)); // 从 5 改为 10
     }
     vTaskDelay(pdMS_TO_TICKS(10));
 }
@@ -140,7 +145,7 @@ void Otto::Home(bool hands_down) {
 bool Otto::GetRestState() { return is_otto_resting_; }
 void Otto::SetRestState(bool state) { is_otto_resting_ = state; }
 
-// =================== 官方原版动作库 ===================
+// =================== 完整动作库 ===================
 void Otto::Jump(float steps, int period) {
     int up[SERVO_COUNT] = {90, 90, 150, 30, HAND_HOME_POSITION, 180 - HAND_HOME_POSITION};
     MoveServos(period, up);
