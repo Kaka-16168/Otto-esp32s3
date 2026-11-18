@@ -1,6 +1,7 @@
 #include <driver/i2c_master.h>
 #include <driver/ledc.h>
 #include <driver/spi_common.h>
+#include <driver/gpio.h> // 【新增】用于锁定背光引脚
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
@@ -20,7 +21,7 @@
 #include "lamp_controller.h"
 #include "led/single_led.h"
 #include "mcp_server.h"
-#include "otto_emoji_display.h" // 官方动态表情
+#include "otto_emoji_display.h"
 #include "power_manager.h"
 #include "system_reset.h"
 #include "websocket_control_server.h"
@@ -67,7 +68,10 @@ private:
         io_config.cs_gpio_num = hw_config_.display_cs_pin;
         io_config.dc_gpio_num = hw_config_.display_dc_pin;
         io_config.spi_mode = DISPLAY_SPI_MODE;
-        io_config.pclk_hz = 10 * 1000 * 1000; // 【防白屏】SPI降至20M
+        
+        // 【防白屏】极限降频
+        io_config.pclk_hz = 10 * 1000 * 1000; 
+        
         io_config.trans_queue_depth = 10;
         io_config.lcd_cmd_bits = 8;
         io_config.lcd_param_bits = 8;
@@ -80,13 +84,18 @@ private:
 
         ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(panel_io, &panel_config, &panel));
 
-        esp_lcd_panel_reset(panel);
+        // 【防白屏】严格的硬件复位时序
+        vTaskDelay(pdMS_TO_TICKS(100)); 
+        gpio_set_level(hw_config_.display_rst_pin, 0);
+        vTaskDelay(pdMS_TO_TICKS(100)); 
+        gpio_set_level(hw_config_.display_rst_pin, 1);
+        vTaskDelay(pdMS_TO_TICKS(120)); 
+
         esp_lcd_panel_init(panel);
         esp_lcd_panel_invert_color(panel, DISPLAY_INVERT_COLOR);
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
 
-        // 【恢复动态表情】
         display_ = new OttoEmojiDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
                                         DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
                                         DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
@@ -103,28 +112,71 @@ private:
         });
     }
 
+    // 【功能恢复】闹钟与完美关机工具
     void InitializeMcpTools() {
         auto& mcp_server = McpServer::GetInstance();
 
-        mcp_server.AddTool("self.set_alarm", "Set an alarm.", PropertyList({{"seconds", kPropertyTypeInteger, 1, 86400}}),
+        // 1. 动态闹钟
+        mcp_server.AddTool(
+            "self.set_alarm",
+            "Set an alarm for a specific number of seconds.",
+            PropertyList({{"seconds", kPropertyTypeInteger, 1, 86400}}),
             [this](const PropertyList& properties) -> McpReturnType {
                 int seconds = properties["seconds"].value<int>();
                 if (seconds <= 0) seconds = 10; 
-                if (alarm_timer_ != nullptr) { esp_timer_stop(alarm_timer_); esp_timer_delete(alarm_timer_); alarm_timer_ = nullptr; }
-                esp_timer_create_args_t timer_args = { .callback = [](void* arg) { ESP_LOGW(TAG, "⏰ 时间到了！"); }, .name = "otto_alarm" };
-                if (esp_timer_create(&timer_args, &alarm_timer_) == ESP_OK) { esp_timer_start_once(alarm_timer_, seconds * 1000000ULL); return true; }
+                if (alarm_timer_ != nullptr) {
+                    esp_timer_stop(alarm_timer_);
+                    esp_timer_delete(alarm_timer_);
+                    alarm_timer_ = nullptr;
+                }
+                esp_timer_create_args_t timer_args = {
+                    .callback = [](void* arg) {
+                        ESP_LOGW(TAG, "⏰ 主人，时间到了！");
+                        // 在独立任务中触发系统音效（如果有的话），或者弹窗
+                        auto& app = Application::GetInstance();
+                        app.Schedule([]() {
+                            // 借用系统提示音，或者在这里调用 TTS
+                            app.PlaySound(Lang::Sounds::OGG_POPUP); 
+                        });
+                    },
+                    .arg = nullptr, 
+                    .dispatch_method = ESP_TIMER_TASK, 
+                    .name = "otto_alarm"
+                };
+                if (esp_timer_create(&timer_args, &alarm_timer_) == ESP_OK) {
+                    esp_timer_start_once(alarm_timer_, seconds * 1000000ULL);
+                    ESP_LOGI(TAG, "⏰ 闹钟已设置，%d 秒后响铃", seconds);
+                    return true;
+                }
                 return false;
-            });
+            }
+        );
 
-        mcp_server.AddTool("self.shutdown", "Shutdown.", PropertyList(),
+        // 2. 深度关机（绝不微亮）
+        mcp_server.AddTool(
+            "self.shutdown",
+            "Shutdown the robot. Turns off screen and servos, then enters deep sleep.",
+            PropertyList(),
             [this](const PropertyList& properties) -> McpReturnType {
-                pca9685_all_off(); GetBacklight()->SetBrightness(0); vTaskDelay(pdMS_TO_TICKS(1000)); esp_deep_sleep_start(); return true;
-            });
+                ESP_LOGW(TAG, "🔌 收到关机指令，准备进入深度睡眠...");
+                pca9685_all_off(); // 1. 舵机断电
+                
+                GetBacklight()->SetBrightness(0); // 2. 背光关到 0
+                
+                // 【核心修复】3. 强制锁定背光引脚为低电平，防止深度睡眠漏电导致屏幕微亮
+                gpio_set_level(hw_config_.display_backlight_pin, 0);
+                gpio_hold_en(hw_config_.display_backlight_pin); 
+
+                vTaskDelay(pdMS_TO_TICKS(500)); // 稍作停留，确保用户看到黑屏
+                esp_deep_sleep_start(); // 4. 进入死睡
+                return true;
+            }
+        );
     }
 
     static void OttoInitTask(void* arg) {
         OttoRobot* self = static_cast<OttoRobot*>(arg);
-        vTaskDelay(pdMS_TO_TICKS(3000)); // 后台防卡死
+        vTaskDelay(pdMS_TO_TICKS(3000)); 
         
         otto_pca_init(); 
         ESP_LOGI(TAG, ">>> 舵机后台初始化完成，恢复至 90 度 <<<");
@@ -138,6 +190,8 @@ private:
 
 public:
     OttoRobot() : boot_button_(BOOT_BUTTON_GPIO), audio_codec_(nullptr) {
+        vTaskDelay(pdMS_TO_TICKS(200)); // 开机等待供电稳定
+
         hw_config_ = NON_CAMERA_VERSION_CONFIG;
         
         if (hw_config_.audio_use_simplex) {
@@ -159,6 +213,8 @@ public:
         InitializePowerManager();
         
         xTaskCreate(OttoInitTask, "otto_init", 4096, this, 3, NULL);
+        
+        // 【调用】初始化 MCP 工具
         InitializeMcpTools();
 
         ws_control_server_ = nullptr;
@@ -180,14 +236,13 @@ public:
 
     virtual Camera* GetCamera() override { return nullptr; }
 
-    // 【核心防崩】强行斩断云端下发的错误表情
     virtual std::string GetDeviceStatusJson() override {
         std::string baseJson = WifiBoard::GetDeviceStatusJson();
         cJSON* root = cJSON_Parse(baseJson.c_str());
         if (root != nullptr) {
             cJSON_DeleteItemFromObject(root, "chip_name"); cJSON_AddStringToObject(root, "chip_name", "ESP32-S3-N16R8");
             cJSON_DeleteItemFromObject(root, "screen_type"); cJSON_AddStringToObject(root, "screen_type", "ST7789");
-            cJSON_DeleteItemFromObject(root, "emoji_collection"); // 拒绝下发错误表情
+            cJSON_DeleteItemFromObject(root, "emoji_collection"); // 拒收错误表情
             
             char* newJson = cJSON_PrintUnformatted(root); std::string result(newJson);
             cJSON_free(newJson); cJSON_Delete(root); return result;
