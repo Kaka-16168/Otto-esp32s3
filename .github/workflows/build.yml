@@ -23,18 +23,19 @@ jobs:
           source "$IDF_PATH/export.sh"
           cd xiaozhi-esp32
           
-          # 彻底清理一切历史残留
           rm -f sdkconfig sdkconfig.old
           rm -rf build
           
-          # 生成语言包
           python scripts/gen_lang.py --language zh-CN --output main/assets/lang_config.h
-          
-          # 1. 纯原生编译，绝不加载那个多管闲事的 build.py
           idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esp32s3" build
           
-          # 2. 使用官方合并工具，自动读取生成的 flasher_args，地址绝对100%正确！
-          idf.py merge-bin -o otto-firmware-full.bin
+          cd build
+          esptool.py --chip esp32s3 merge_bin -o otto-firmware-full.bin \
+            --flash_mode dio --flash_freq 40m --flash_size 16MB \
+            0x0 bootloader/bootloader.bin \
+            0x8000 partition_table/partition-table.bin \
+            0x10000 xiaozhi.bin \
+            0x810000 generated_assets.bin
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
