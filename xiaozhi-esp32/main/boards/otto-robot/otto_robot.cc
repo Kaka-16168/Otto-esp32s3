@@ -33,7 +33,6 @@ extern "C" {
 
 #define TAG "OttoRobot"
 extern void InitializeOttoController(const HardwareConfig& hw_config);
-using McpReturnType = ReturnValue;
 
 class OttoRobot : public WifiBoard {
 private:
@@ -68,10 +67,7 @@ private:
         io_config.cs_gpio_num = hw_config_.display_cs_pin;
         io_config.dc_gpio_num = hw_config_.display_dc_pin;
         io_config.spi_mode = DISPLAY_SPI_MODE;
-        
-        // 防白屏降频
-        io_config.pclk_hz = 10 * 1000 * 1000; 
-        
+        io_config.pclk_hz = 10 * 1000 * 1000; // 降频防花屏
         io_config.trans_queue_depth = 10;
         io_config.lcd_cmd_bits = 8;
         io_config.lcd_param_bits = 8;
@@ -84,7 +80,7 @@ private:
 
         ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(panel_io, &panel_config, &panel));
 
-        // 严格的硬件复位时序
+        // 严格复位时序
         vTaskDelay(pdMS_TO_TICKS(100)); 
         gpio_set_level(hw_config_.display_rst_pin, 0);
         vTaskDelay(pdMS_TO_TICKS(100)); 
@@ -96,6 +92,7 @@ private:
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
 
+        // 保持动态表情
         display_ = new OttoEmojiDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
                                         DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
                                         DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
@@ -112,15 +109,16 @@ private:
         });
     }
 
+    // 【MCP 工具】返回 std::string 类型，保证最高兼容性
     void InitializeMcpTools() {
         auto& mcp_server = McpServer::GetInstance();
 
-        // 1. 动态闹钟 (纯非阻塞安全写法)
+        // 1. 闹钟
         mcp_server.AddTool(
             "self.set_alarm",
             "Set an alarm for a specific number of seconds.",
             PropertyList({{"seconds", kPropertyTypeInteger, 1, 86400}}),
-            [this](const PropertyList& properties) -> McpReturnType {
+            [this](const PropertyList& properties) -> std::string {
                 int seconds = properties["seconds"].value<int>();
                 if (seconds <= 0) seconds = 10; 
                 if (alarm_timer_ != nullptr) {
@@ -131,9 +129,9 @@ private:
                 esp_timer_create_args_t timer_args = {
                     .callback = [](void* arg) {
                         ESP_LOGW(TAG, "⏰ 主人，时间到了！");
-                        // 【安全】直接改变一次角度，不使用 vTaskDelay，安全退出
+                        // 使用封装好的接口，避免缺少头文件
                         for (int i = 0; i < 6; i++) {
-                            pca9685_set_angle(i, 135); 
+                            otto_pca_set_servo_angle(i, 135); 
                         }
                     },
                     .arg = nullptr, 
@@ -143,29 +141,27 @@ private:
                 if (esp_timer_create(&timer_args, &alarm_timer_) == ESP_OK) {
                     esp_timer_start_once(alarm_timer_, seconds * 1000000ULL);
                     ESP_LOGI(TAG, "⏰ 闹钟已设置，%d 秒后响铃", seconds);
-                    return true;
+                    return "{\"status\":\"success\",\"message\":\"Alarm set\"}";
                 }
-                return false;
+                return "{\"status\":\"error\",\"message\":\"Failed to create timer\"}";
             }
         );
 
-        // 2. 深度关机
+        // 2. 关机
         mcp_server.AddTool(
             "self.shutdown",
             "Shutdown the robot. Turns off screen and servos, then enters deep sleep.",
             PropertyList(),
-            [this](const PropertyList& properties) -> McpReturnType {
+            [this](const PropertyList& properties) -> std::string {
                 ESP_LOGW(TAG, "🔌 收到关机指令，准备进入深度睡眠...");
                 pca9685_all_off(); 
                 GetBacklight()->SetBrightness(0); 
-                
-                // 强制锁定背光引脚为低电平，绝不微亮
                 gpio_set_level(hw_config_.display_backlight_pin, 0);
                 gpio_hold_en(hw_config_.display_backlight_pin); 
 
                 vTaskDelay(pdMS_TO_TICKS(500)); 
                 esp_deep_sleep_start(); 
-                return true;
+                return "{\"status\":\"success\",\"message\":\"Shutting down\"}";
             }
         );
     }
@@ -186,7 +182,7 @@ private:
 
 public:
     OttoRobot() : boot_button_(BOOT_BUTTON_GPIO), audio_codec_(nullptr) {
-        vTaskDelay(pdMS_TO_TICKS(200)); // 开机等待供电稳定
+        vTaskDelay(pdMS_TO_TICKS(200)); 
 
         hw_config_ = NON_CAMERA_VERSION_CONFIG;
         
