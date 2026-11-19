@@ -37,8 +37,7 @@ esp_err_t pca9685_init(void) {
     i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = PCA9685_ADDR,
-        // 【核心修复 1】速率翻 4 倍，达到 400kHz，减少 75% 的通信阻塞时间
-        .scl_speed_hz = 400000, 
+        .scl_speed_hz = PCA9685_I2C_FREQ_HZ,
     };
     ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(s_bus, &dev_cfg, &s_dev), TAG, "I2C add fail");
 
@@ -46,14 +45,14 @@ esp_err_t pca9685_init(void) {
     write_reg(0x00, 0x00); write_reg(0x01, 0x04); vTaskDelay(pdMS_TO_TICKS(10));
     write_reg(0x00, 0x10); write_reg(0xFE, 121); write_reg(0x00, 0xA0); vTaskDelay(pdMS_TO_TICKS(10));
 
-    ESP_LOGI(TAG, "PCA9685 高速初始化完成 (400kHz)");
+    ESP_LOGI(TAG, "PCA9685 初始化完成 (400kHz)");
     return ESP_OK;
 }
 
 esp_err_t pca9685_set_angle(uint8_t channel, uint8_t angle) {
     if (channel > 15) return ESP_ERR_INVALID_ARG;
     if (angle > 180) angle = 180;
-    uint16_t counts = 102 + ((uint32_t)(512 - 102) * angle) / 180;
+    uint16_t counts = SERVO_0_DEG_COUNT + ((uint32_t)(SERVO_180_DEG_COUNT - SERVO_0_DEG_COUNT) * angle) / 180;
     uint8_t buf[5] = {0x06 + 4 * channel, 0, 0, counts & 0xFF, (counts >> 8) & 0x0F};
     return i2c_master_transmit(s_dev, buf, 5, 100);
 }
